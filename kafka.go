@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -39,8 +40,13 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 
 	var err error
 	var tmpl *template.Template
-	if text := os.Getenv("KAFKA_TEMPLATE"); text != "" {
-		tmpl, err = template.New("kafka").Parse(text)
+	funcMap := template.FuncMap{
+		"json":      jsonMarshal,
+		"timestamp": timestamp,
+	}
+
+	if kafkaTempl := os.Getenv("KAFKA_TEMPLATE"); kafkaTempl != "" {
+		tmpl, err = template.New("kafka").Funcs(funcMap).Parse(kafkaTempl)
 		if err != nil {
 			return nil, errorf("Couldn't parse Kafka message template. %v", err)
 		}
@@ -65,8 +71,9 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 			if i == retries-1 {
 				return nil, errorf("Couldn't create Kafka producer. %v", err)
 			}
-		} else {
 			time.Sleep(1 * time.Second)
+		} else {
+			break
 		}
 	}
 
@@ -158,4 +165,13 @@ func errorf(format string, a ...interface{}) (err error) {
 		fmt.Println(err.Error())
 	}
 	return
+}
+
+func jsonMarshal(v interface{}) (string) {
+	jsonValue, _ := json.Marshal(v)
+	return string(jsonValue)
+}
+
+func timestamp(t time.Time) (string) {
+	return t.UTC().Format(time.RFC3339Nano)
 }
