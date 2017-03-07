@@ -33,6 +33,11 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 		return nil, errorf("The Kafka broker host:port is missing. Did you specify it as a route address?")
 	}
 
+	otherBrokers := readBrokersFromOption(route.Options)
+	for _, b := range otherBrokers {
+		brokers = append(brokers, b)
+	}
+
 	topic := readTopic(route.Address, route.Options)
 	if topic == "" {
 		return nil, errorf("The Kafka topic is missing. Did you specify it as a route option?")
@@ -145,6 +150,14 @@ func readBrokers(address string) []string {
 	}
 
 	return strings.Split(address, ",")
+}
+
+func readBrokersFromOption(options map[string]string) []string {
+	brokers := options["brokers"]
+	if brokers != "" {
+		return strings.Split(brokers, "|")
+	}
+	return nil
 }
 
 func readTopic(address string, options map[string]string) string {
