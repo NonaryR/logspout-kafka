@@ -29,8 +29,8 @@ type KafkaAdapter struct {
 }
 
 type KafkaMessage struct {
-	message *router.Message
-	envs    *map[string]string
+	Message *router.Message
+	Envs    *map[string]string
 }
 
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
@@ -137,8 +137,8 @@ func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerM
 	if a.tmpl != nil {
 		var w bytes.Buffer
 		kafkaMessage := KafkaMessage{
-			message: message,
-			envs:    &a.envs,
+			Message: message,
+			Envs:    &a.envs,
 		}
 		if err := a.tmpl.Execute(&w, kafkaMessage); err != nil {
 			return nil, err
