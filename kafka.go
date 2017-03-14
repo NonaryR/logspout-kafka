@@ -25,6 +25,12 @@ type KafkaAdapter struct {
 	topic    string
 	producer sarama.AsyncProducer
 	tmpl     *template.Template
+	envs     map[string]string
+}
+
+type KafkaMessage struct {
+	message *router.Message
+	envs    *map[string]string
 }
 
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
@@ -88,6 +94,7 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 		topic:    topic,
 		producer: producer,
 		tmpl:     tmpl,
+		envs:     getEnvMap(),
 	}, nil
 }
 
@@ -129,7 +136,11 @@ func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerM
 	var encoder sarama.Encoder
 	if a.tmpl != nil {
 		var w bytes.Buffer
-		if err := a.tmpl.Execute(&w, message); err != nil {
+		kafkaMessage := KafkaMessage{
+			message: message,
+			envs:    &a.envs,
+		}
+		if err := a.tmpl.Execute(&w, kafkaMessage); err != nil {
 			return nil, err
 		}
 		encoder = sarama.ByteEncoder(w.Bytes())
@@ -187,4 +198,13 @@ func jsonMarshal(v interface{}) (string) {
 
 func timestamp(t time.Time) (string) {
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func getEnvMap() map[string]string {
+	var envs = make(map[string]string)
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		envs[pair[0]] = pair[1]
+	}
+	return envs
 }
