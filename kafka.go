@@ -13,6 +13,9 @@ import (
 
 	"github.com/gliderlabs/logspout/router"
 	"gopkg.in/Shopify/sarama.v1"
+	"crypto/tls"
+	"io/ioutil"
+	"crypto/x509"
 )
 
 func init() {
@@ -74,7 +77,7 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 	}
 	var producer sarama.AsyncProducer
 	for i := 0; i < retries; i++ {
-		producer, err = sarama.NewAsyncProducer(brokers, newConfig())
+		producer, err = sarama.NewAsyncProducer(brokers, newConfig(route.Options))
 		if err != nil {
 			if os.Getenv("DEBUG") != "" {
 				log.Println("Couldn't create Kafka producer. Retrying...", err)
@@ -112,13 +115,51 @@ func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	}
 }
 
-func newConfig() *sarama.Config {
+func newConfig(options map[string]string) *sarama.Config {
 	config := sarama.NewConfig()
 	config.ClientID = "logspout"
 	config.Producer.Return.Errors = false
 	config.Producer.Return.Successes = false
 	config.Producer.Flush.Frequency = 1 * time.Second
 	config.Producer.RequiredAcks = sarama.WaitForLocal
+
+	enableSsl, ssl := options["ssl"]
+	if ssl && "true" == enableSsl {
+		caPath := "/data/certs/kafka/ca.pem"
+		certPath := "/data/certs/kafka/client_cert.pem"
+		keyPath := "/data/certs/kafka/client_key.pem"
+
+		log.Printf("Load certs: %s\n", caPath)
+		ca, err := ioutil.ReadFile(caPath)
+		if err != nil {
+			log.Fatal("Could not load CA certificate!")
+		}
+
+		log.Printf("Load certs: %s\n", certPath)
+		cert, err := ioutil.ReadFile(certPath)
+		if err != nil {
+			log.Fatal("Could not load clientCert!")
+		}
+
+		log.Printf("Load certs: %s\n", keyPath)
+		key, err := ioutil.ReadFile(keyPath)
+		if err != nil {
+			log.Fatal("Could not load clientKey!")
+		}
+		keyPair, err := tls.X509KeyPair(cert, key)
+		if err != nil {
+			log.Fatal("Could not parser client cert! ", err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(ca)
+
+		config.Net.TLS.Enable = true
+		config.Net.TLS.Config = &tls.Config{
+			RootCAs:            caCertPool,
+			Certificates:       []tls.Certificate{keyPair},
+			InsecureSkipVerify: true,
+		}
+	}
 
 	if opt := os.Getenv("KAFKA_COMPRESSION_CODEC"); opt != "" {
 		switch opt {
