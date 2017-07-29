@@ -11,12 +11,15 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/logspout/router"
 	"gopkg.in/Shopify/sarama.v1"
 	"crypto/tls"
 	"io/ioutil"
 	"crypto/x509"
 )
+
+var host string
 
 func init() {
 	router.AdapterFactories.Register(NewKafkaAdapter, "kafka")
@@ -29,14 +32,33 @@ type KafkaAdapter struct {
 	producer sarama.AsyncProducer
 	tmpl     *template.Template
 	envs     map[string]string
+	host     string
 }
 
 type KafkaMessage struct {
-	Message *router.Message
-	Envs    *map[string]string
+	*router.Message
+	Envs  *map[string]string
+	Info  *DockerInfo
+	Level int32
+}
+
+type DockerInfo struct {
+	ContainerId     string
+	ContainerFullId string
+	ContainerName   string
+	ImageId         string
+	ImageName       string
+	HostId          string
+	HostName        string
+	HostAddr        string
+	HostIp          string
+	Command         string
+	Stack           string // or project for docker compose
+	Service         string // or service for docker compose
 }
 
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
+	host = getHostFromDockerApi()
 	brokers := readBrokers(route.Address)
 	if len(brokers) == 0 {
 		return nil, errorf("The Kafka broker host:port is missing. Did you specify it as a route address?")
@@ -57,6 +79,7 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 	funcMap := template.FuncMap{
 		"json":      jsonMarshal,
 		"timestamp": timestamp,
+		"getenv":    tplGetEnvVar,
 	}
 
 	if kafkaTempl := os.Getenv("KAFKA_TEMPLATE"); kafkaTempl != "" {
@@ -100,11 +123,24 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 		envs:     getEnvMap(),
 	}, nil
 }
+func getHostFromDockerApi() string {
+	var client *docker.Client
+	var err error
+	if client, err = docker.NewClientFromEnv(); err != nil {
+		return ""
+	}
+	var clientInfo *docker.DockerInfo
+	if clientInfo, err = client.Info(); err != nil {
+		return ""
+	}
+	return clientInfo.Name
+}
 
 func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
+	dockerInfo := &DockerInfo{}
 	for rm := range logstream {
-		message, err := a.formatMessage(rm)
+		message, err := a.formatMessage(rm, dockerInfo)
 		if err != nil {
 			log.Println("kafka:", err)
 			a.route.Close()
@@ -173,13 +209,16 @@ func newConfig(options map[string]string) *sarama.Config {
 	return config
 }
 
-func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerMessage, error) {
+func (a *KafkaAdapter) formatMessage(message *router.Message, dockerInfo *DockerInfo) (*sarama.ProducerMessage, error) {
 	var encoder sarama.Encoder
 	if a.tmpl != nil {
+		prepareDockerInfo(message, dockerInfo)
 		var w bytes.Buffer
 		kafkaMessage := KafkaMessage{
 			Message: message,
 			Envs:    &a.envs,
+			Info:    dockerInfo,
+			Level:   getMessageLevel(message.Source),
 		}
 		if err := a.tmpl.Execute(&w, kafkaMessage); err != nil {
 			return nil, err
@@ -193,6 +232,72 @@ func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerM
 		Topic: a.topic,
 		Value: encoder,
 	}, nil
+}
+func getMessageLevel(source string) int32 {
+	if source == "stdout" {
+		return 6 // LOG_INFO
+	} else if source == "stderr" {
+		return 3 // LOG_ERR
+	} else {
+		return 5 // LOG_NOTICE
+	}
+}
+
+func prepareDockerInfo(message *router.Message, dockerInfo *DockerInfo) {
+	if dockerInfo.ContainerFullId == message.Container.ID {
+		return
+	}
+	dockerInfo.ContainerId = normalID(message.Container.ID)
+	dockerInfo.ContainerFullId = message.Container.ID
+	dockerInfo.ContainerName = normalName(message.Container.Name)
+	dockerInfo.ImageId = message.Container.Image
+	dockerInfo.ImageName = message.Container.Config.Image
+	if label, ok := message.Container.Config.Labels["com.docker.stack.namespace"]; ok {
+		dockerInfo.Stack = label
+	} else {
+		dockerInfo.Stack = message.Container.Config.Labels["com.docker.compose.project"]
+	}
+	if label, ok := message.Container.Config.Labels["com.docker.swarm.service.name"]; ok {
+		dockerInfo.Service = label
+	} else {
+		dockerInfo.Service = message.Container.Config.Labels["com.docker.compose.service"]
+	}
+	if message.Container.Node != nil {
+		dockerInfo.HostName = message.Container.Node.Name
+		dockerInfo.HostAddr = message.Container.Node.Addr
+		dockerInfo.HostIp = message.Container.Node.IP
+	} else {
+		dockerInfo.HostName = host
+	}
+	dockerInfo.Command = getCommand(message)
+}
+
+func getCommand(message *router.Message) string {
+	terms := message.Container.Config.Entrypoint
+	terms = append(terms, message.Container.Config.Cmd...)
+	command := strings.Join(terms, " ")
+	return command
+}
+
+func normalName(name string) string {
+	return strings.TrimPrefix(name, "/")
+}
+
+func normalID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+func tplGetEnvVar(env []string, key string) string {
+	key_equals := key + "="
+	for _, value := range env {
+		if strings.HasPrefix(value, key_equals) {
+			return value[len(key_equals):]
+		}
+	}
+	return ""
 }
 
 func readBrokers(address string) []string {
