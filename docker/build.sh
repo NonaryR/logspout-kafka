@@ -8,8 +8,7 @@ export GOPATH=/go
 go get
 go build -ldflags "-X main.Version=$1" -o /bin/logspout
 apk del go git mercurial build-base
-rm -rf /go
-rm -rf /var/cache/apk/*
+rm -rf /go /var/cache/apk/* /root/.glide
 
 # backwards compatibility
 ln -fs /tmp/docker.sock /var/run/docker.sock
