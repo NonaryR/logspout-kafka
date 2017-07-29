@@ -2,6 +2,8 @@
 
 A [Logspout](https://github.com/gliderlabs/logspout) adapter for writing Docker container logs to [Kafka](https://github.com/apache/kafka) topics.
 
+This project has extension for github fork upstream. More information refer [here](docker/README.md).
+
 ## usage
 
 With *container-logs* as the Kafka topic for Docker container logs, we can direct all messages to Kafka using the **logspout** [Route API](https://github.com/gliderlabs/logspout/tree/master/routesapi):
@@ -59,35 +61,8 @@ docker run --name logspout \
   -p "8000:8000" \
   --volume /logspout/routes:/mnt/routes \
   --volume /var/run/docker.sock:/tmp/docker.sock \
-  gettyimages/example-logspout
+  fengzhou/logspout
 
 ```
 
 The routes can be updated on a running container by using the **logspout** [Route API](https://github.com/gliderlabs/logspout/tree/master/routesapi) and specifying the route `id` "cat" or "dog".
-
-## build
-
-**logspout-kafka** is a custom **logspout** module. To use it, create an empty `Dockerfile` based on `gliderlabs/logspout` and include this **logspout-kafka** module in a new `modules.go` file.
-
-The following example creates an almost-minimal **logspout** image capable of writing Docker container logs to Kafka topics:
-
-```
-cat > ./Dockerfile.example <<DOCKERFILE
-FROM gliderlabs/logspout:master
-
-ENV KAFKA_COMPRESSION_CODEC snappy
-DOCKERFILE
-
-cat > ./modules.go <<MODULES
-package main
-import (
-  _ "github.com/gliderlabs/logspout/httpstream"
-  _ "github.com/gliderlabs/logspout/routesapi"
-  _ "github.com/gettyimages/logspout-kafka"
-)
-MODULES
-
-docker build -t gettyimages/example-logspout -f Dockerfile.example .
-```
-
-More info about building custom modules is available at the **logspout** project: [Custom Logspout Modules](https://github.com/gliderlabs/logspout/blob/master/custom/README.md)
